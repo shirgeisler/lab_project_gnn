@@ -37,23 +37,33 @@ def train_gnn(model, data, optimizer):
     """Trains the GNN model."""
     model.train()
     total_loss = 0
+    correct = 0
 
-    for pyg_graph, label in data:
+    for pyg_graph in data:
         optimizer.zero_grad()
 
         # Forward pass
         out = model(pyg_graph)
         #one hot encode the labels
-        label = F.one_hot(label, num_classes=200)
 
-        loss = F.nll_loss(out[0], label)
+        label = pyg_graph.y
+        label_oh = F.one_hot(label, num_classes=200)
+
+        loss = F.nll_loss(out, label)
 
         loss.backward()  # Backward pass
         optimizer.step()  # Update the model weights
 
         total_loss += loss.item()
 
-    return total_loss / len(data)
+        #take the label with the highest probability for each image
+        _, predicted = torch.max(out, 1)
+        #compare it with the actual label
+
+        correct += (predicted == label).sum().item()
+
+    total_size = len(data)
+    return total_loss / len(data), correct/total_size
 
 
 def main():
@@ -76,8 +86,8 @@ def main():
     batch_count = 0
     for graph_batch in processor.load_saved_graphs():
         batch_count += 1
-        loss = train_gnn(model, graph_batch, optimizer)  # Train on the batch of graphs
-        print(f"number of batches processed: {batch_count} / {len(processor.train_loader)} | total loss: {loss}")
+        loss, correct_ratio = train_gnn(model, graph_batch, optimizer)  # Train on the batch of graphs
+        print(f"number of batches processed: {batch_count}, size of current batch: {len(graph_batch)} | total loss: {loss}, correct ratio: {correct_ratio}")
 
     # Validation Loop with tqdm for progress tracking
     correct = 0
