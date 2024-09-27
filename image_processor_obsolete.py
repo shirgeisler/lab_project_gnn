@@ -4,24 +4,41 @@ from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from torchvision import transforms, datasets
-from torch_geometric.data import Data, Batch
-import os
-import random
+from torch_geometric.data import Data
 
 
 class ImageGraphProcessor:
     def __init__(self, image_size=(64, 64), num_parts=64, num_clusters=3, batch_size=32,
-                 data_path='data/tiny-imagenet-200'):
+               data_path='data/tiny-imagenet-200'):
         """
         Initializes the ImageGraphProcessor with parameters for image size, number of parts, and clusters.
         """
         self.image_size = image_size
         self.num_parts = num_parts
         self.num_clusters = num_clusters
-        self.data_path = data_path
-        self.batch_size = batch_size
         self.train_path = data_path + '/train'
         self.val_path = data_path + '/val'
+
+        self.folder_name_to_label = {}
+        with open(data_path + '/words.txt', 'r') as f:
+            for line in f:
+                parts = line.split('\t')
+                self.folder_name_to_label[parts[0]] = parts[1].strip()
+
+        # Set up transforms for image loading
+        self.transform = transforms.Compose([
+            transforms.Resize(image_size),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+
+        # Load the dataset, the labels are the names of the folders
+        self.train_dataset = datasets.ImageFolder(root=self.train_path, transform=self.transform)
+        self.train_loader = DataLoader(self.train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+
+        self.val_dataset = datasets.ImageFolder(root=self.val_path, transform=self.transform)
+        self.val_loader = DataLoader(self.val_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+
 
     def split_image_into_parts(self, image):
         """Splits a PyTorch image tensor into num_parts parts."""
@@ -49,6 +66,7 @@ class ImageGraphProcessor:
 
     def create_pyg_graph(self, parts, num_rows, num_cols):
         """Directly creates a PyTorch Geometric graph without relying on NetworkX."""
+
         avg_colors = [self.calculate_average_color(part) for part in parts]
 
         # Clustering using KMeans
@@ -141,87 +159,43 @@ class ImageGraphProcessor:
         plt.tight_layout()
         plt.show()
 
-    def process_and_save_graphs(self, train=True):
-        """Processes images, constructs PyG graphs, and saves them individually to disk."""
-
-        self.folder_name_to_label = {}
-        with open(self.data_path + '/words.txt', 'r') as f:
-            for line in f:
-                parts = line.split('\t')
-                self.folder_name_to_label[parts[0]] = parts[1].strip()
-
-        # Set up transforms for image loading
-        self.transform = transforms.Compose([
-            transforms.Resize(self.image_size),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
-
-        # Load the datasett
-
-        if train:
-            self.train_dataset = datasets.ImageFolder(root=self.self.train_path, transform=self.transform)
-            self.train_loader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=4)
-        else:
-            self.val_dataset = datasets.ImageFolder(root=self.val_path, transform=self.transform)
-            self.val_loader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=True, num_workers=4)
+    def process_batch(self, train=True, batch_size=32):
+        """Processes a batch of images, constructs a batch of PyG graphs, and returns them."""
+        graphs_batch = []  # To hold multiple graphs
+        labels_batch = []  # To hold corresponding labels
 
         data_loader = self.train_loader if train else self.val_loader
-        graph_count = 0  # Counter for naming saved graphs
-        string_train_val = 'train' if train else 'val'
 
         for images, labels in data_loader:
             for i in range(images.size(0)):  # Loop through each image in the batch
-                image = images[i]
+                image = images[i]  # Get each image from the batch
+
+                # Split the image into parts
                 parts, num_rows, num_cols, part_height, part_width = self.split_image_into_parts(image)
+
+                # Create the graph
                 pyg_graph, cluster_labels, edge_index = self.create_pyg_graph(parts, num_rows, num_cols)
-                pyg_graph.y = labels[i]  # Assign the label to the graph
 
-                # Save each graph individually
-                graph_filename = os.path.join(string_train_val + '_' + self.save_path, f"graph_{graph_count}.pt")
-                torch.save(pyg_graph, graph_filename)
-                print(f"Saved graph {graph_count} to {graph_filename}")
-                graph_count += 1
-
-
-    def load_saved_graphs(self, shuffle=True, train=True):
-        """Loads pre-processed graphs from disk in batches."""
-        train_or_val_string = 'train' if train else 'val'
-        graphs_path = train_or_val_string + '_graphs'
-
-        graph_files = sorted(os.listdir(graphs_path))  # List of saved graph files
-
-        # Shuffle the graph files if shuffle=True
-        if shuffle:
-            random.shuffle(graph_files)
-
-        # Load graphs in batches
-        for i in range(0, len(graph_files), self.batch_size):
-            graphs_batch = []
-            for j in range(i, min(i + self.batch_size, len(graph_files))):
-                graph_filename = os.path.join(graphs_path, graph_files[j])
-                pyg_graph = torch.load(graph_filename)
+                # Add the graph and corresponding label to the batch
                 graphs_batch.append(pyg_graph)
-            # Create a PyTorch Geometric batch from the list of individual graphs
-            #print the names of the graphs
-            print(graphs_batch)
-            print(len(graphs_batch))
-            print('--------------------------------------------------------------')
-            batched_graph = Batch.from_data_list(graphs_batch)
-            yield batched_graph
+                labels_batch.append(labels[i])
+
+                # Return a batch of graphs if it reaches the batch size
+                if len(graphs_batch) == batch_size:
+                    yield graphs_batch, labels_batch
+                    graphs_batch = []  # Reset the batch
+                    labels_batch = []  # Reset the label batch
+
+        # Yield any remaining graphs if there are fewer than batch_size
+        if graphs_batch:
+            yield graphs_batch, labels_batch
+
 
 if __name__ == '__main__':
-
-
-
-
     # Initialize the processor
     processor = ImageGraphProcessor(image_size=(64, 64), num_parts=64, num_clusters=3)
 
-    # Process and save batches of images and graphs
-    # processor.process_and_save_graphs(train=True)
-    #processor.process_and_save_graphs(train=False)  # if Train is False, then it will process the validation data
-
-    # # Example: Load saved batches and use for training or evaluation
-    for batched_graph in processor.load_saved_graphs(shuffle=True, train=True):
-        print(f"Loaded batch with {len(batched_graph)} graphs")
+    # Process a batch of images and create graphs
+    for pyg_graph, cluster_labels in processor.process_batch():
+        # The graph is processed and the image with clusters is displayed
+        print(pyg_graph)  # PyTorch Geometric graph ready for GNN input

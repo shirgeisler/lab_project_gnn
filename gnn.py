@@ -1,8 +1,8 @@
 import torch
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv
+from torch_geometric.nn import GCNConv, global_mean_pool
 
-from image_processor import ImageGraphProcessor
+from image_processor_obsolete import ImageGraphProcessor
 from tqdm import tqdm
 
 
@@ -24,6 +24,12 @@ class GNN(torch.nn.Module):
         # Second GCN layer
         x = self.conv2(x, edge_index)
 
+        #adjust output dimension to be 1 with a linear layer
+        #we want the output to be a tensor of (32,200) where 32 is the batch size and 200 is the number of classes
+
+        x = global_mean_pool(x, data.batch)
+
+
         return F.log_softmax(x, dim=1)  # Log Softmax for classification
 
 
@@ -37,8 +43,10 @@ def train_gnn(model, data, labels, optimizer):
 
         # Forward pass
         out = model(pyg_graph)
+        #one hot encode the labels
+        label = F.one_hot(label, num_classes=200)
 
-        loss = F.nll_loss(out, label)
+        loss = F.nll_loss(out[0], label)
 
         loss.backward()  # Backward pass
         optimizer.step()  # Update the model weights
@@ -65,10 +73,12 @@ def main():
     # Train the GNN model
 
     # Training Loop with tqdm for progress tracking
+    batch_count = 0
     for graphs_batch, labels_batch in processor.process_batch(train=True, batch_size=32):
         # Now you have a batch of graphs and their corresponding labels
+        batch_count += 1
         loss = train_gnn(model, graphs_batch, labels_batch, optimizer)  # Train on the batch of graphs
-        print(f"Training loss: {loss}")
+        print(f"number of batches processed: {batch_count} / {len(processor.train_loader)} | total loss: {loss}")
 
     # Validation Loop with tqdm for progress tracking
     correct = 0
