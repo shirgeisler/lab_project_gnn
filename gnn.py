@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, global_mean_pool
 
-from image_processor_obsolete import ImageGraphProcessor
+from image_processor import ImageGraphProcessor
 from tqdm import tqdm
 
 
@@ -33,12 +33,12 @@ class GNN(torch.nn.Module):
         return F.log_softmax(x, dim=1)  # Log Softmax for classification
 
 
-def train_gnn(model, data, labels, optimizer):
+def train_gnn(model, data, optimizer):
     """Trains the GNN model."""
     model.train()
     total_loss = 0
 
-    for pyg_graph, label in zip(data, labels):
+    for pyg_graph, label in data:
         optimizer.zero_grad()
 
         # Forward pass
@@ -74,10 +74,9 @@ def main():
 
     # Training Loop with tqdm for progress tracking
     batch_count = 0
-    for graphs_batch, labels_batch in processor.process_batch(train=True, batch_size=32):
-        # Now you have a batch of graphs and their corresponding labels
+    for graph_batch in processor.load_saved_graphs():
         batch_count += 1
-        loss = train_gnn(model, graphs_batch, labels_batch, optimizer)  # Train on the batch of graphs
+        loss = train_gnn(model, graph_batch, optimizer)  # Train on the batch of graphs
         print(f"number of batches processed: {batch_count} / {len(processor.train_loader)} | total loss: {loss}")
 
     # Validation Loop with tqdm for progress tracking

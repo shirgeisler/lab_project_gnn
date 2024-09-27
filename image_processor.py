@@ -204,11 +204,8 @@ class ImageGraphProcessor:
                 graphs_batch.append(pyg_graph)
             # Create a PyTorch Geometric batch from the list of individual graphs
             #print the names of the graphs
-            print(graphs_batch)
-            print(len(graphs_batch))
-            print('--------------------------------------------------------------')
-            batched_graph = Batch.from_data_list(graphs_batch)
-            yield batched_graph
+
+            yield graphs_batch
 
 if __name__ == '__main__':
 
