@@ -1,9 +1,9 @@
 import torch
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv, global_mean_pool
+from torch_geometric.nn import GCNConv, GlobalAttention, global_mean_pool
+
 
 from image_processor import ImageGraphProcessor
-from tqdm import tqdm
 
 
 # Define a simple GCN (Graph Convolutional Network)
@@ -12,10 +12,11 @@ class GNN(torch.nn.Module):
         super(GNN, self).__init__()
         # Graph Convolutional Layers
         self.conv1 = GCNConv(input_dim, hidden_dim)  # First GCN layer
-        self.conv2 = GCNConv(hidden_dim, output_dim)  # Second GCN layer
+        self.conv2 = GCNConv(hidden_dim, hidden_dim)  # Second GCN layer
+        self.fc = torch.nn.Linear(hidden_dim, output_dim)  # Linear layer for output
 
     def forward(self, data):
-        x, edge_index = data.x, data.edge_index
+        x, edge_index, batch = data.x, data.edge_index, data.batch
 
         # First GCN layer with ReLU activation
         x = self.conv1(x, edge_index)
@@ -24,82 +25,73 @@ class GNN(torch.nn.Module):
         # Second GCN layer
         x = self.conv2(x, edge_index)
 
-        #adjust output dimension to be 1 with a linear layer
-        #we want the output to be a tensor of (32,200) where 32 is the batch size and 200 is the number of classes
+        # Pooling to get graph-level output (global mean pooling)
+        x = global_mean_pool(x, batch)  # Shape: [batch_size, hidden_dim]
 
-        x = global_mean_pool(x, data.batch)
-
+        # Linear transformation to match the number of classes
+        x = self.fc(x)  # Shape: [batch_size, output_dim]
 
         return F.log_softmax(x, dim=1)  # Log Softmax for classification
+
 
 
 def train_gnn(model, data, optimizer):
     """Trains the GNN model."""
     model.train()
-    total_loss = 0
-    correct = 0
+    optimizer.zero_grad()  # Clear previous gradients
 
-    for pyg_graph in data:
-        optimizer.zero_grad()
+    # Forward pass
+    out = model(data)  # Get model output
 
-        # Forward pass
-        out = model(pyg_graph)
-        #one hot encode the labels
+    # Cross-Entropy Loss (use `nll_loss` if output is `log_softmax`)
+    loss = F.nll_loss(out, data.y)
 
-        label = pyg_graph.y
-        label_oh = F.one_hot(label, num_classes=200)
+    # Backward pass and optimization
+    loss.backward()
+    optimizer.step()
 
-        loss = F.nll_loss(out, label)
+    # Calculate accuracy
+    _, predicted = torch.max(out, dim=1)  # Get the index of the max log-probability
+    correct = (predicted == data.y).sum().item()  # Count correct predictions
+    total_size = len(data.y)  # Total number of samples
 
-        loss.backward()  # Backward pass
-        optimizer.step()  # Update the model weights
-
-        total_loss += loss.item()
-
-        #take the label with the highest probability for each image
-        _, predicted = torch.max(out, 1)
-        #compare it with the actual label
-
-        correct += (predicted == label).sum().item()
-
-    total_size = len(data)
-    return total_loss / len(data), correct/total_size
+    return loss.item(), correct / total_size
 
 
 def main():
-    # Initialize the ImageGraphProcessor
+    # Assume ImageGraphProcessor and other parts are defined elsewhere
     processor = ImageGraphProcessor(image_size=(64, 64), num_parts=64, num_clusters=3)
 
     # Initialize the GNN model
-    input_dim = 3  # Since node features are average RGB colors (3 dimensions)
+    input_dim = 3  # Node features: RGB colors (3 dimensions)
     hidden_dim = 16  # Hidden dimension size
-    output_dim = 200  # Output classes (e.g., binary classification)
+    output_dim = 200  # Number of classes (update as needed)
 
     model = GNN(input_dim=input_dim, hidden_dim=hidden_dim, output_dim=output_dim)
 
     # Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
-    # Train the GNN model
-
     # Training Loop with tqdm for progress tracking
     batch_count = 0
     for graph_batch in processor.load_saved_graphs():
         batch_count += 1
-        loss, correct_ratio = train_gnn(model, graph_batch, optimizer)  # Train on the batch of graphs
-        print(f"number of batches processed: {batch_count}, size of current batch: {len(graph_batch)} | total loss: {loss}, correct ratio: {correct_ratio}")
+        loss, correct_ratio = train_gnn(model, graph_batch, optimizer)
+        print(
+            f"Batch {batch_count} | Batch Size: {len(graph_batch)} | Loss: {loss:.4f} | Accuracy: {correct_ratio:.4f}")
 
-    # Validation Loop with tqdm for progress tracking
+    # Validation Loop
     correct = 0
     total = 0
     with torch.no_grad():
-        for pyg_graph, labels in tqdm(processor.process_batch(train=False), desc="Validation"):
+        for pyg_graph, labels in processor.process_batch(train=False):
             out = model(pyg_graph)
-            _, predicted = torch.max(out, 1)
+            _, predicted = torch.max(out, dim=1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
 
-    print(f'Accuracy of the network on the {total} validation images: {100 * correct / total}%')
+    print(f'Validation Accuracy: {100 * correct / total:.2f}%')
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

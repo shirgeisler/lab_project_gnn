@@ -184,28 +184,74 @@ class ImageGraphProcessor:
                 graph_count += 1
 
 
+    # def load_saved_graphs(self, shuffle=True, train=True):
+    #     """Loads pre-processed graphs from disk in batches."""
+    #     train_or_val_string = 'train' if train else 'val'
+    #     graphs_path = train_or_val_string + '_graphs'
+    #
+    #     graph_files = sorted(os.listdir(graphs_path))  # List of saved graph files
+    #
+    #     # Shuffle the graph files if shuffle=True
+    #     if shuffle:
+    #         random.shuffle(graph_files)
+    #
+    #     # Load graphs in batches
+    #     for i in range(0, len(graph_files), self.batch_size):
+    #         graphs_batch = []
+    #         for j in range(i, min(i + self.batch_size, len(graph_files))):
+    #             graph_filename = os.path.join(graphs_path, graph_files[j])
+    #             pyg_graph = torch.load(graph_filename)
+    #             graphs_batch.append(pyg_graph)
+    #         # Create a PyTorch Geometric batch from the list of individual graphs
+    #         #print the names of the graphs
+    #
+    #         yield graphs_batch
+
+    from torch_geometric.loader import DataLoader
+    import os
+    import random
+    import torch
+    #
+    # def load_saved_graphs(self, shuffle=True, train=True):
+    #     """Loads pre-processed graphs from disk and returns a DataLoader."""
+    #     train_or_val_string = 'train' if train else 'val'
+    #     graphs_path = f'{train_or_val_string}_graphs'
+    #
+    #     graph_files = sorted(os.listdir(graphs_path))
+    #     if shuffle:
+    #         random.shuffle(graph_files)
+    #
+    #     # Load graphs into memory
+    #     graphs = [torch.load(os.path.join(graphs_path, f)) for f in graph_files]
+    #
+    #     # Create a PyTorch Geometric DataLoader
+    #     return DataLoader(graphs, batch_size=self.batch_size, shuffle=shuffle)
+
     def load_saved_graphs(self, shuffle=True, train=True):
-        """Loads pre-processed graphs from disk in batches."""
+        """Loads pre-processed graphs from disk and returns a DataLoader with lazy loading."""
         train_or_val_string = 'train' if train else 'val'
-        graphs_path = train_or_val_string + '_graphs'
+        graphs_path = f'{train_or_val_string}_graphs'
 
-        graph_files = sorted(os.listdir(graphs_path))  # List of saved graph files
-
-        # Shuffle the graph files if shuffle=True
+        graph_files = sorted(os.listdir(graphs_path))
         if shuffle:
             random.shuffle(graph_files)
 
-        # Load graphs in batches
-        for i in range(0, len(graph_files), self.batch_size):
-            graphs_batch = []
-            for j in range(i, min(i + self.batch_size, len(graph_files))):
-                graph_filename = os.path.join(graphs_path, graph_files[j])
-                pyg_graph = torch.load(graph_filename)
-                graphs_batch.append(pyg_graph)
-            # Create a PyTorch Geometric batch from the list of individual graphs
-            #print the names of the graphs
+        # Create a function that will act as a lazy data access
+        def get_graph(idx):
+            graph_filename = os.path.join(graphs_path, graph_files[idx])
+            return torch.load(graph_filename)
 
-            yield graphs_batch
+        # Create a list-like object that supports indexing and length to use with DataLoader
+        dataset = list(range(len(graph_files)))  # Use indices to represent the dataset
+
+        # Return a DataLoader with a custom collate function for lazy loading
+        return DataLoader(
+            dataset,
+            batch_size=self.batch_size,
+            shuffle=shuffle,
+            collate_fn=lambda indices: Batch.from_data_list([get_graph(idx) for idx in indices])
+        )
+
 
 if __name__ == '__main__':
 
