@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, GlobalAttention, global_mean_pool
 
 
-from image_processor import ImageGraphProcessor
+from image_processor_offline import ImageGraphProcessor
 
 
 # Define a simple GCN (Graph Convolutional Network)
@@ -65,7 +65,7 @@ def main():
     # Initialize the GNN model
     input_dim = 3  # Node features: RGB colors (3 dimensions)
     hidden_dim = 16  # Hidden dimension size
-    output_dim = 200  # Number of classes (update as needed)
+    output_dim = 10  # Number of classes
 
     model = GNN(input_dim=input_dim, hidden_dim=hidden_dim, output_dim=output_dim)
 

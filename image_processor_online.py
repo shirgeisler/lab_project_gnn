@@ -5,6 +5,14 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from torchvision import transforms, datasets
 from torch_geometric.data import Data
+from baseline import filter_dataset
+import random
+import os
+
+SEED = 30
+random.seed(SEED)
+train_path = 'data/tiny-imagenet-200/train'
+test_path = 'data/tiny-imagenet-200/val'
 
 
 class ImageGraphProcessor:
@@ -32,13 +40,17 @@ class ImageGraphProcessor:
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
 
-        # Load the dataset, the labels are the names of the folders
-        self.train_dataset = datasets.ImageFolder(root=self.train_path, transform=self.transform)
-        self.train_loader = DataLoader(self.train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+        all_classes = os.listdir(train_path)  # Each sub-folder represents a class
+        selected_classes = random.sample(all_classes, 10)
 
-        self.val_dataset = datasets.ImageFolder(root=self.val_path, transform=self.transform)
-        self.val_loader = DataLoader(self.val_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+        train_dataset = datasets.ImageFolder(root=train_path, transform=self.transform)
+        test_dataset = datasets.ImageFolder(root=test_path, transform=self.transform)
 
+        train_dataset = filter_dataset(train_dataset, selected_classes)
+        test_dataset = filter_dataset(test_dataset, selected_classes)
+
+        self.train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4)
+        self.test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4)
 
     def split_image_into_parts(self, image):
         """Splits a PyTorch image tensor into num_parts parts."""
