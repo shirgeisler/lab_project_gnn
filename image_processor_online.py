@@ -90,20 +90,36 @@ class ImageGraphProcessor:
 
         # Initialize edge index list
         edge_index = []
+        edge_attr = []
+        cluster_labels = None
 
-        # Add edges based on adjacency
-        for row in range(num_rows):
-            for col in range(num_cols):
-                idx = row * num_cols + col
-                if col < num_cols - 1:  # Right neighbor
-                    right_neighbor = idx + 1
-                    edge_index.append([idx, right_neighbor])
-                    edge_index.append([right_neighbor, idx])  # Add reverse direction
-                if row < num_rows - 1:  # Bottom neighbor
-                    bottom_neighbor = idx + num_cols
-                    edge_index.append([idx, bottom_neighbor])
-                    edge_index.append([bottom_neighbor, idx])  # Add reverse direction
+        if method == 'complete_graph_with_reweights':
+            num_nodes = len(parts)
+            for i in range(num_nodes):
+                for j in range(i + 1, num_nodes):
+                    edge_index.append([i, j])
+                    edge_index.append([j, i])
 
+                    # Compute weight as the negative Euclidean distance
+                    weight = -torch.dist(x[i], x[j], p=2).item()
+                    edge_attr.extend([weight, weight])  # Symmetric edge weights
+
+            # Convert edge_index and edge_attr to tensors
+            edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+            edge_attr = torch.tensor(edge_attr, dtype=torch.float)
+        else:
+            # Add edges based on adjacency
+            for row in range(num_rows):
+                for col in range(num_cols):
+                    idx = row * num_cols + col
+                    if col < num_cols - 1:  # Right neighbor
+                        right_neighbor = idx + 1
+                        edge_index.append([idx, right_neighbor])
+                        edge_index.append([right_neighbor, idx])  # Add reverse direction
+                    if row < num_rows - 1:  # Bottom neighbor
+                        bottom_neighbor = idx + num_cols
+                        edge_index.append([idx, bottom_neighbor])
+                        edge_index.append([bottom_neighbor, idx])  # Add reverse direction
 
         if method == 'kmeans':
             # Clustering using KMeans
@@ -130,10 +146,12 @@ class ImageGraphProcessor:
                     edge_index.append([i, knn[i][j]])
                     edge_index.append([knn[i][j], i])
             edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
-            cluster_labels = None
 
         # Create a PyTorch Geometric graph
         pyg_graph = Data(x=x, edge_index=edge_index)
+
+        if method == 'complete_graph_with_reweights':
+            pyg_graph.edge_attr = edge_attr  # Attach edge weights
 
         return pyg_graph, cluster_labels, edge_index
 
@@ -205,7 +223,7 @@ class ImageGraphProcessor:
                 parts, num_rows, num_cols, part_height, part_width = self.split_image_into_parts(image)
 
                 # Create the graph
-                pyg_graph, cluster_labels, edge_index = self.create_pyg_graph(parts, num_rows, num_cols, method='kmeans')
+                pyg_graph, cluster_labels, edge_index = self.create_pyg_graph(parts, num_rows, num_cols, method='complete_graph_with_reweights')
                 pyg_graph.y = labels[i]
 
                 # Add the graph and corresponding label to the batch
