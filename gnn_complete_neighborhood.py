@@ -3,6 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import global_mean_pool
 from image_processor_online import ImageGraphProcessor
+from sklearn.metrics import confusion_matrix
+import numpy as np
+import pandas as pd
+
 
 # Define a simple GNN (Graph Neural Network) with dynamic adjacency matrix
 class GNNCompleteNeighborhood(nn.Module):
@@ -12,43 +16,68 @@ class GNNCompleteNeighborhood(nn.Module):
         self.fc1 = nn.Linear(input_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, output_dim)
 
-    def compute_adjacency_matrix(self, x):
+    def compute_adjacency_matrix(self, x, batch):
         """
-        Computes a fully connected dynamic adjacency matrix where the weights
-        are determined by the cosine similarity between node feature vectors.
+        Computes dynamic adjacency matrices for a batch of graphs.
+        Each graph's adjacency matrix is computed separately based on
+        the cosine similarity between node feature vectors within that graph.
         """
-        print()
-        num_nodes = x.size(0)  # Number of nodes
-        adjacency_matrix = torch.ones(num_nodes, num_nodes)  # Fully connected with ones initially
+        # Get the number of graphs in the batch
+        num_graphs = batch.max().item() + 1
 
-        # Compute dynamic weights using cosine similarity between nodes
-        for i in range(num_nodes):
-            for j in range(num_nodes):
-                if i != j:
-                    similarity = F.cosine_similarity(x[i].unsqueeze(0), x[j].unsqueeze(0))
-                    adjacency_matrix[i, j] = similarity.item()  # Set edge weight as cosine similarity
+        # List to store adjacency matrices for each graph
+        adjacency_matrices = []
 
-        return adjacency_matrix
+        # Iterate over each graph in the batch
+        for graph_id in range(num_graphs):
+            # Extract the nodes belonging to the current graph
+            node_mask = (batch == graph_id)
+            x_graph = x[node_mask]
+
+            # Normalize features for cosine similarity
+            x_norm = F.normalize(x_graph, p=2, dim=1)
+
+            # Compute the adjacency matrix for this graph
+            adjacency_matrix = torch.mm(x_norm, x_norm.t())
+
+            # Set diagonal to 0 (no self-loops)
+            adjacency_matrix.fill_diagonal_(0)
+
+            adjacency_matrices.append(adjacency_matrix)
+
+        return adjacency_matrices  # Return a list of matrices
 
     def forward(self, data):
         x, batch = data.x, data.batch
 
-        # Step 1: Compute the dynamic adjacency matrix based on node features
-        adjacency_matrix = self.compute_adjacency_matrix(x)
+        # Step 1: Compute dynamic adjacency matrices for the batch
+        adjacency_matrices = self.compute_adjacency_matrix(x, batch)
 
-        # Step 2: First layer: apply linear transformation and ReLU activation
+        # Step 2: Apply the first linear transformation and ReLU activation
         x = F.relu(self.fc1(x))
 
-        # Step 3: Multiply the transformed features by the dynamic adjacency matrix
-        x = torch.mm(adjacency_matrix, x)
+        # Step 3: Use adjacency matrices to propagate features within each graph
+        out = []
+        for graph_id, adj_matrix in enumerate(adjacency_matrices):
+            # Select the nodes for this graph
+            node_mask = (batch == graph_id)
+            x_graph = x[node_mask]
+
+            # Multiply the node features with the adjacency matrix
+            x_graph = torch.mm(adj_matrix, x_graph)
+
+            out.append(x_graph)
+
+        # Concatenate results from all graphs back into a single tensor
+        x = torch.cat(out, dim=0)
 
         # Step 4: Apply the second linear layer
         x = self.fc2(x)
 
-        # Step 5: Pooling operation to get graph-level output
+        # Step 5: Global mean pooling to get graph-level output
         x = global_mean_pool(x, batch)
 
-        return F.log_softmax(x, dim=1)  # Apply log-softmax for classification
+        return F.log_softmax(x, dim=1)
 
 
 # Training function
@@ -76,7 +105,10 @@ def train_gnn(model, data, optimizer):
 
 
 def main():
-    # Assume ImageGraphProcessor and other parts are defined elsewhere
+    # Define the method name as a string
+    method_name = "GNNCompleteNeighborhood"
+
+    # Initialize the ImageGraphProcessor with original class names
     processor = ImageGraphProcessor(image_size=(64, 64), num_parts=64, num_clusters=3)
 
     # Initialize the GNN model
@@ -90,7 +122,10 @@ def main():
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
     # Define number of epochs
-    num_epochs = 10  # You can adjust this
+    num_epochs = 5  # You can adjust this
+
+    # Dataframe list to store each row of predictions for validation
+    validation_results = []
 
     # Training loop with epochs
     for epoch in range(num_epochs):
@@ -99,12 +134,12 @@ def main():
         total_correct = 0
         total_samples = 0
 
+        # Train the model (skipping storing predictions for training phase)
         for i, graph_batch in enumerate(processor.process_batch(train=True)):
             loss, correct_ratio = train_gnn(model, graph_batch, optimizer)
             total_loss += loss
             total_correct += correct_ratio * len(graph_batch)  # Multiply by batch size to accumulate accuracy
             total_samples += len(graph_batch)
-            print(f"batch {i} finished")
 
         avg_loss = total_loss / total_samples
         avg_accuracy = total_correct / total_samples
@@ -114,14 +149,32 @@ def main():
         # Validation after each epoch
         correct = 0
         total = 0
+
         with torch.no_grad():
-            for pyg_graph in processor.process_batch(train=False):
+            for i, pyg_graph in enumerate(processor.process_batch(train=False)):
                 out = model(pyg_graph)
                 _, predicted = torch.max(out, dim=1)
                 total += pyg_graph.y.size(0)
                 correct += (predicted == pyg_graph.y).sum().item()
 
-        print(f'Epoch {epoch + 1} Validation Accuracy: {100 * correct / total:.2f}%\n')
+                # For each batch, record method, epoch, image (batch index), true, and predicted values
+                for j in range(len(predicted)):
+                    validation_results.append({
+                        "method": method_name,
+                        "epoch": epoch + 1,
+                        "image": i * len(predicted) + j,  # Unique image index based on batch and item index
+                        "true": pyg_graph.y[j].item(),
+                        "pred": predicted[j].item()
+                    })
+
+        val_accuracy = 100 * correct / total
+        print(f'Epoch {epoch + 1} Validation Accuracy: {val_accuracy:.2f}%\n')
+
+    # After all epochs, save the validation results to a CSV
+    df = pd.DataFrame(validation_results)
+    output_csv_path = f'validation_results.csv'
+    df.to_csv(output_csv_path, index=False)
+    print(f"Validation results saved to {output_csv_path}")
 
 
 if __name__ == "__main__":

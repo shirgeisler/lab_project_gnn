@@ -45,16 +45,21 @@ class ImageGraphProcessor:
         ])
 
         all_classes = os.listdir(train_path)  # Each sub-folder represents a class
-        selected_classes = random.sample(all_classes, 10)
+        self.selected_classes = random.sample(all_classes, 10)
+        self.original_class_names = [self.folder_name_to_label[c] for c in self.selected_classes]
 
         train_dataset = datasets.ImageFolder(root=train_path, transform=self.transform)
         test_dataset = datasets.ImageFolder(root=test_path, transform=self.transform)
 
-        train_dataset = filter_dataset(train_dataset, selected_classes)
-        test_dataset = filter_dataset(test_dataset, selected_classes)
+        train_dataset = filter_dataset(train_dataset, self.selected_classes)
+        test_dataset = filter_dataset(test_dataset, self.selected_classes)
 
         self.train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4)
         self.test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4)
+
+    def get_class_names(self):
+        """Returns the human-readable class names in the same order as the selected classes."""
+        return self.original_class_names
 
     def split_image_into_parts(self, image):
         """Splits a PyTorch image tensor into num_parts parts."""
@@ -211,7 +216,6 @@ class ImageGraphProcessor:
     def process_batch(self, train=True, batch_size=32):
         """Processes a batch of images, constructs a batch of PyG graphs, and returns them."""
         graphs_batch = []  # To hold multiple graphs
-        labels_batch = []  # To hold corresponding labels
 
         data_loader = self.train_loader if train else self.test_loader
 
@@ -222,24 +226,29 @@ class ImageGraphProcessor:
                 # Split the image into parts
                 parts, num_rows, num_cols, part_height, part_width = self.split_image_into_parts(image)
 
-                # Create the graph
-                pyg_graph, cluster_labels, edge_index = self.create_pyg_graph(parts, num_rows, num_cols, method='complete_graph_with_reweights')
-                pyg_graph.y = labels[i]
+                # Create the graph, ensure node features are 64x3
+                pyg_graph, cluster_labels, edge_index = self.create_pyg_graph(parts, num_rows, num_cols,
+                                                                              method='knn')
+
+                # Ensure node features are of shape (64, 3)
+                assert pyg_graph.x.size() == (64, 3), "Node features should be 64x3."
+
+                pyg_graph.y = labels[i]  # Add label to the graph
 
                 # Add the graph and corresponding label to the batch
                 graphs_batch.append(pyg_graph)
-                #labels_batch.append(labels[i])
 
                 # Return a batch of graphs if it reaches the batch size
                 if len(graphs_batch) == batch_size:
-                    yield Batch.from_data_list(graphs_batch)
+                    batch = Batch.from_data_list(graphs_batch)  # Create batch of graphs
+                    # Ensure the batch is shaped appropriately (this should preserve the 64x3 for each graph)
+                    assert batch.x.size(0) == batch_size * 64, "Batch node features should be (batch_size * 64) by 3."
+                    yield batch  # Yield the batch for further processing
                     graphs_batch = []  # Reset the batch
-                    labels_batch = []  # Reset the label batch
 
         # Yield any remaining graphs if there are fewer than batch_size
         if graphs_batch:
             yield Batch.from_data_list(graphs_batch)
-
 
 
 if __name__ == '__main__':
