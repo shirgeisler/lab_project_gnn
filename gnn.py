@@ -66,7 +66,7 @@ def train_gnn(model, data, optimizer):
     optimizer.step()
 
     # Calculate accuracy
-    _, predicted = torch.max(out, dim=1)  # Get the index of the max log-probability
+    _, predicted = torch.max(out, dim=1)  # Get the index of the max log-probability.
     correct = (predicted == data.y).sum().item()  # Count correct predictions
     total_size = len(data.y)  # Total number of samples
 
