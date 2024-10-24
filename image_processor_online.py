@@ -2,12 +2,15 @@ import torch
 import numpy as np
 from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
+import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms, datasets
-from torch_geometric.data import Data
+from torch_geometric.data import Data, DataLoader as PyGDataLoader
 from baseline import filter_dataset
 import random
 import os
+from torch_geometric.data import Batch
+
 
 SEED = 30
 random.seed(SEED)
@@ -192,7 +195,7 @@ class ImageGraphProcessor:
         graphs_batch = []  # To hold multiple graphs
         labels_batch = []  # To hold corresponding labels
 
-        data_loader = self.train_loader if train else self.val_loader
+        data_loader = self.train_loader if train else self.test_loader
 
         for images, labels in data_loader:
             for i in range(images.size(0)):  # Loop through each image in the batch
@@ -202,21 +205,23 @@ class ImageGraphProcessor:
                 parts, num_rows, num_cols, part_height, part_width = self.split_image_into_parts(image)
 
                 # Create the graph
-                pyg_graph, cluster_labels, edge_index = self.create_pyg_graph(parts, num_rows, num_cols)
+                pyg_graph, cluster_labels, edge_index = self.create_pyg_graph(parts, num_rows, num_cols, method='kmeans')
+                pyg_graph.y = labels[i]
 
                 # Add the graph and corresponding label to the batch
                 graphs_batch.append(pyg_graph)
-                labels_batch.append(labels[i])
+                #labels_batch.append(labels[i])
 
                 # Return a batch of graphs if it reaches the batch size
                 if len(graphs_batch) == batch_size:
-                    yield graphs_batch, labels_batch
+                    yield Batch.from_data_list(graphs_batch)
                     graphs_batch = []  # Reset the batch
                     labels_batch = []  # Reset the label batch
 
         # Yield any remaining graphs if there are fewer than batch_size
         if graphs_batch:
-            yield graphs_batch, labels_batch
+            yield Batch.from_data_list(graphs_batch)
+
 
 
 if __name__ == '__main__':
