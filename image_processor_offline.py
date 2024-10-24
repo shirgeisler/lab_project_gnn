@@ -10,7 +10,7 @@ import random
 
 
 class ImageGraphProcessor:
-    def __init__(self, image_size=(64, 64), num_parts=64, num_clusters=3, batch_size=32,
+    def __init__(self, image_size=(64, 64), num_parts=64, num_clusters=3, num_nearest_neighbors = 5, batch_size=32,
                  data_path='data/tiny-imagenet-200'):
         """
         Initializes the ImageGraphProcessor with parameters for image size, number of parts, and clusters.
@@ -18,6 +18,7 @@ class ImageGraphProcessor:
         self.image_size = image_size
         self.num_parts = num_parts
         self.num_clusters = num_clusters
+        self.num_nearest_neighbors = num_nearest_neighbors
         self.data_path = data_path
         self.batch_size = batch_size
         self.train_path = data_path + '/train'
@@ -47,13 +48,9 @@ class ImageGraphProcessor:
         avg_color = np.mean(part_np, axis=(0, 1))  # Average over the height and width
         return avg_color
 
-    def create_pyg_graph(self, parts, num_rows, num_cols):
+    def create_pyg_graph(self, parts, num_rows, num_cols, method='kmeans'):
         """Directly creates a PyTorch Geometric graph without relying on NetworkX."""
         avg_colors = [self.calculate_average_color(part) for part in parts]
-
-        # Clustering using KMeans
-        kmeans = KMeans(n_clusters=self.num_clusters)
-        cluster_labels = kmeans.fit_predict(avg_colors)
 
         # Initialize node features as a PyTorch tensor (avg color)
         x = torch.tensor(avg_colors, dtype=torch.float)
@@ -74,15 +71,37 @@ class ImageGraphProcessor:
                     edge_index.append([idx, bottom_neighbor])
                     edge_index.append([bottom_neighbor, idx])  # Add reverse direction
 
-        # Add edges based on clustering
-        for i in range(len(parts)):
-            for j in range(i + 1, len(parts)):
-                if cluster_labels[i] == cluster_labels[j]:
-                    edge_index.append([i, j])
-                    edge_index.append([j, i])  # Add reverse direction
 
-        # Convert edge list to a tensor
-        edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+        if method == 'kmeans':
+            # Clustering using KMeans
+            kmeans = KMeans(n_clusters=self.num_clusters)
+            cluster_labels = kmeans.fit_predict(avg_colors)
+
+
+            # Add edges based on clustering
+            for i in range(len(parts)):
+                for j in range(i + 1, len(parts)):
+                    if cluster_labels[i] == cluster_labels[j]:
+                        edge_index.append([i, j])
+                        edge_index.append([j, i])  # Add reverse direction
+
+            # Convert edge list to a tensor
+            edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+
+        if method == 'knn':
+            # create neighbor edges based on KNN
+            from sklearn.neighbors import NearestNeighbors
+            neigh = NearestNeighbors(n_neighbors=self.num_nearest_neighbors)
+            neigh.fit(avg_colors)
+            knn = neigh.kneighbors(avg_colors, return_distance=False)
+            for i in range(len(parts)):
+                for j in range(len(knn[i])):
+                    edge_index.append([i, knn[i][j]])
+                    edge_index.append([knn[i][j], i])
+            edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+            cluster_labels = None
+
+
 
         # Create the PyTorch Geometric graph
         pyg_graph = Data(x=x, edge_index=edge_index)

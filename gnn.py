@@ -1,9 +1,7 @@
 import torch
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, GlobalAttention, global_mean_pool
-
-
-from image_processor_offline import ImageGraphProcessor
+from image_processor_online import ImageGraphProcessor
 
 
 # Define a simple GCN (Graph Convolutional Network)
