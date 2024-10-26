@@ -6,15 +6,16 @@ This project explores different graph construction methods for image classificat
 
 1. **Download the Dataset**  
    Download the Tiny ImageNet dataset from Kaggle: [Tiny ImageNet Dataset](https://www.kaggle.com/datasets/akash2sharma/tiny-imagenet?resource=download).
-
-2. **Reformat Validation Data**  
+   Place the downloaded file in the `data` folder and unzip it. You can use `extract.py` to handle the extraction if preferred—just be sure to adjust the file paths to match your setup.
+   
+3. **Reformat Validation Data**  
    Run `reformat_validation_set.py` to reorganize the validation files, ensuring they match the structure of the training data.
 
-3. **Baseline Results**  
+4. **Baseline Results**  
    Execute `baseline.py` to obtain baseline performance metrics.
 
-4. **GNN Fully Connected Model**  
+5. **GNN Fully Connected Model**  
    Use `gnn_fully_connected.py` to compute results for the Fully Connected GNN approach.
 
-5. **KNN / K-Means Results**  
+6. **KNN / K-Means Results**  
    Run `gnn.py` to test either the KNN or K-Means graph construction method. Modify the `method` parameter (line 111) to `"knn"` or `"kmeans"` as desired.
