@@ -167,7 +167,7 @@ def evaluate(model, loader, criterion):
 
 if __name__ == "__main__":
     train_loader, test_loader = get_loaders()
-    num_epochs = 10
+    num_epochs = 5
     learning_rate = 0.001
     num_classes = 10
 
