@@ -3,24 +3,30 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import global_mean_pool
 from image_processor_online import ImageGraphProcessor
-from sklearn.metrics import confusion_matrix
-import numpy as np
 import pandas as pd
+import os
 
 
-# Define a simple GNN (Graph Neural Network) with dynamic adjacency matrix
-class GNNCompleteNeighborhood(nn.Module):
+class GNNFullyConnected(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
-        super(GNNCompleteNeighborhood, self).__init__()
-        # Define two fully connected layers
+        super(GNNFullyConnected, self).__init__()
         self.fc1 = nn.Linear(input_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, output_dim)
 
     def compute_adjacency_matrix(self, x, batch):
         """
-        Computes dynamic adjacency matrices for a batch of graphs.
-        Each graph's adjacency matrix is computed separately based on
-        the cosine similarity between node feature vectors within that graph.
+           Compute dynamic adjacency matrices for each graph in the batch.
+           Uses cosine similarity between node features within each graph to construct
+           separate adjacency matrices, with self-connections (diagonal) set to zero.
+
+           Args:
+               x (Tensor): Node features of shape [total_nodes, feature_dim].
+               batch (Tensor): Batch vector assigning each node to a specific graph, with
+                               shape [total_nodes].
+
+           Returns:
+               List[Tensor]: A list of adjacency matrices, one for each graph in the batch,
+                             where each matrix has shape [num_nodes_graph, num_nodes_graph].
         """
         # Get the number of graphs in the batch
         num_graphs = batch.max().item() + 1
@@ -40,23 +46,42 @@ class GNNCompleteNeighborhood(nn.Module):
             # Compute the adjacency matrix for this graph
             adjacency_matrix = torch.mm(x_norm, x_norm.t())
 
-            # Set diagonal to 0 (no self-loops)
+            # Set diagonal to 0
             adjacency_matrix.fill_diagonal_(0)
 
             adjacency_matrices.append(adjacency_matrix)
 
-        return adjacency_matrices  # Return a list of matrices
+        return adjacency_matrices
 
     def forward(self, data):
+        """
+        Perform a forward pass through the GNN model.
+
+        This method computes dynamic adjacency matrices for each graph in the batch
+        and applies feature transformations and propagation within each graph.
+        Finally, it performs global mean pooling to get graph-level representations
+        and returns log softmax values for classification.
+
+        Args:
+            data (Batch): A PyTorch Geometric Batch object containing:
+                          - x (Tensor): Node features of shape [total_nodes, feature_dim].
+                          - batch (Tensor): Batch vector assigning each node to a specific
+                                            graph, with shape [total_nodes].
+
+        Returns:
+            Tensor: Log-softmax probabilities of shape [num_graphs, num_classes] for each
+                    graph in the batch.
+        """
+
         x, batch = data.x, data.batch
 
-        # Step 1: Compute dynamic adjacency matrices for the batch
+        # Compute dynamic adjacency matrices for the batch
         adjacency_matrices = self.compute_adjacency_matrix(x, batch)
 
-        # Step 2: Apply the first linear transformation and ReLU activation
+        # Apply the first linear transformation and ReLU activation
         x = F.relu(self.fc1(x))
 
-        # Step 3: Use adjacency matrices to propagate features within each graph
+        # Use adjacency matrices to propagate features within each graph
         out = []
         for graph_id, adj_matrix in enumerate(adjacency_matrices):
             # Select the nodes for this graph
@@ -71,25 +96,43 @@ class GNNCompleteNeighborhood(nn.Module):
         # Concatenate results from all graphs back into a single tensor
         x = torch.cat(out, dim=0)
 
-        # Step 4: Apply the second linear layer
+        # Apply the second linear layer
         x = self.fc2(x)
 
-        # Step 5: Global mean pooling to get graph-level output
+        # Global mean pooling to get graph-level output
         x = global_mean_pool(x, batch)
 
         return F.log_softmax(x, dim=1)
 
 
-# Training function
 def train_gnn(model, data, optimizer):
-    """Trains the GNN model."""
+    """
+    Train the GNN model on a single batch of data.
+
+    Performs a forward pass, computes the cross-entropy loss, backpropagates
+    the error, and updates the model parameters. It also calculates the
+    batch accuracy.
+
+    Args:
+        model (torch.nn.Module): The GNN model to be trained.
+        data (Batch): A PyTorch Geometric Batch containing:
+                      - x (Tensor): Node features.
+                      - edge_index (Tensor): Edge indices for the graph.
+                      - y (Tensor): True labels for graph-level or node-level targets.
+        optimizer (torch.optim.Optimizer): Optimizer for updating model parameters.
+
+    Returns:
+        tuple: Contains:
+            - loss (float): The cross-entropy loss for the batch.
+            - accuracy (float): The accuracy for the batch, calculated as the
+              proportion of correct predictions.
+    """
+
     model.train()
     optimizer.zero_grad()  # Clear previous gradients
 
     # Forward pass
     out = model(data)  # Get model output
-
-    # Cross-Entropy Loss (use `nll_loss` if output is `log_softmax`)
     loss = F.nll_loss(out, data.y)
 
     # Backward pass and optimization
@@ -105,24 +148,34 @@ def train_gnn(model, data, optimizer):
 
 
 def main():
-    # Define the method name as a string
-    method_name = "GNNCompleteNeighborhood"
+    """
+        Main function for training and validating the GNN model.
 
-    # Initialize the ImageGraphProcessor with original class names
-    processor = ImageGraphProcessor(image_size=(64, 64), num_parts=64, num_clusters=3)
+        This function initializes the data processor, GNN model, and optimizer, then
+        trains and validates the model over multiple epochs. Validation predictions
+        are saved to a CSV file, which appends new data on each run without overwriting
+        existing results.
+
+        Args:
+            None
+
+        Returns:
+            None: Outputs are printed to the console, and validation results are saved
+                  to 'validation_results.csv' after all epochs.
+    """
+
+    method_name = "complete_graph"
+    processor = ImageGraphProcessor(method=method_name, image_size=(64, 64), num_parts=64, num_clusters=3)
 
     # Initialize the GNN model
     input_dim = 3  # Node features: RGB colors (3 dimensions)
-    hidden_dim = 16  # Hidden dimension size
-    output_dim = 10  # Number of classes
+    hidden_dim = 16
+    output_dim = 10
 
-    model = GNNCompleteNeighborhood(input_dim=input_dim, hidden_dim=hidden_dim, output_dim=output_dim)
+    model = GNNFullyConnected(input_dim=input_dim, hidden_dim=hidden_dim, output_dim=output_dim)
 
-    # Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-
-    # Define number of epochs
-    num_epochs = 5  # You can adjust this
+    num_epochs = 5
 
     # Dataframe list to store each row of predictions for validation
     validation_results = []
@@ -173,7 +226,12 @@ def main():
     # After all epochs, save the validation results to a CSV
     df = pd.DataFrame(validation_results)
     output_csv_path = f'validation_results.csv'
-    df.to_csv(output_csv_path, index=False)
+
+    if os.path.isfile(output_csv_path):
+        df.to_csv(output_csv_path, mode='a', header=False, index=False)
+    else:
+        df.to_csv(output_csv_path, index=False)
+
     print(f"Validation results saved to {output_csv_path}")
 
 

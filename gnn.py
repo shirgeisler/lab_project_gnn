@@ -1,22 +1,35 @@
+import os
 import torch
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, global_mean_pool
 from image_processor_online import ImageGraphProcessor
-from sklearn.metrics import confusion_matrix
-import numpy as np
 import pandas as pd
 
 
-# Define a simple GCN (Graph Convolutional Network)
 class GNN(torch.nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
         super(GNN, self).__init__()
-        # Graph Convolutional Layers
         self.conv1 = GCNConv(input_dim, hidden_dim)  # First GCN layer
         self.conv2 = GCNConv(hidden_dim, hidden_dim)  # Second GCN layer
         self.fc = torch.nn.Linear(hidden_dim, output_dim)  # Linear layer for output
 
     def forward(self, data):
+        """
+        Perform a forward pass through the GNN model.
+
+        Applies two GCN layers with ReLU activation, followed by global mean pooling
+        to obtain a graph-level output. A final linear layer transforms this output
+        to match the number of classes, and log softmax is applied for classification.
+
+        Args:
+            data (Batch): A PyTorch Geometric Batch containing:
+                          - x (Tensor): Node features of shape [total_nodes, feature_dim].
+                          - edge_index (Tensor): Edge indices for the graph.
+                          - batch (Tensor): Batch vector assigning each node to a specific graph, with shape [total_nodes].
+
+        Returns:
+            Tensor: Log-softmax probabilities of shape [num_graphs, num_classes] for each graph in the batch.
+        """
         # Extract necessary components from the Batch
         x, edge_index, batch = data.x, data.edge_index, data.batch
 
@@ -37,7 +50,27 @@ class GNN(torch.nn.Module):
 
 
 def train_gnn(model, data, optimizer):
-    """Trains the GNN model."""
+    """
+        Train the GNN model on a single batch of data.
+
+        This function performs a forward pass through the model, computes the
+        cross-entropy loss, backpropagates the error, and updates the model parameters.
+        It also calculates the accuracy for the batch.
+
+        Args:
+            model (torch.nn.Module): The GNN model to be trained.
+            data (Batch): A PyTorch Geometric Batch containing:
+                          - x (Tensor): Node features.
+                          - edge_index (Tensor): Edge indices for the graph.
+                          - y (Tensor): True labels for graph-level or node-level targets.
+            optimizer (torch.optim.Optimizer): Optimizer for updating model parameters.
+
+        Returns:
+            tuple: Contains:
+                - loss (float): The cross-entropy loss for the batch.
+                - accuracy (float): The accuracy for the batch, calculated as the
+                  proportion of correct predictions.
+    """
     model.train()
     optimizer.zero_grad()  # Clear previous gradients
 
@@ -53,31 +86,40 @@ def train_gnn(model, data, optimizer):
 
     # Calculate accuracy
     _, predicted = torch.max(out, dim=1)  # Get the index of the max log-probability.
-    correct = (predicted == data.y).sum().item()  # Count correct predictions
+    correct = (predicted == data.y).sum().item()
     total_size = len(data.y)  # Total number of samples
 
     return loss.item(), correct / total_size
 
 
 def main():
-    # Define the method name as a string
-    method_name = "knn"
+    """
+       Main function for training and validating the GNN model.
 
-    # Initialize the ImageGraphProcessor with original class names
-    processor = ImageGraphProcessor(image_size=(64, 64), num_parts=64, num_clusters=3)
+       This function initializes the data processor, GNN model, and optimizer, then
+       trains and validates the model over multiple epochs. Validation predictions
+       are saved to a CSV file, which appends new data on each run without overwriting
+       existing results.
+
+       Args:
+           None
+
+       Returns:
+           None: Outputs are printed to the console, and validation results are saved
+                 to 'validation_results.csv' after all epochs.
+    """
+    method_name = "knn"
+    processor = ImageGraphProcessor(method=method_name, image_size=(64, 64), num_parts=64, num_clusters=3)
 
     # Initialize the GNN model
     input_dim = 3  # Node features: RGB colors (3 dimensions)
-    hidden_dim = 16  # Hidden dimension size
-    output_dim = 10  # Number of classes
+    hidden_dim = 16
+    output_dim = 10
 
     model = GNN(input_dim=input_dim, hidden_dim=hidden_dim, output_dim=output_dim)
 
-    # Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-
-    # Define number of epochs
-    num_epochs = 10  # You can adjust this
+    num_epochs = 5
 
     # Dataframe list to store each row of predictions for validation
     validation_results = []
@@ -126,8 +168,13 @@ def main():
 
     # After all epochs, save the validation results to a CSV
     df = pd.DataFrame(validation_results)
-    output_csv_path = f'validation_results3.csv'
-    df.to_csv(output_csv_path, index=False)
+    output_csv_path = f'validation_results.csv'
+
+    if os.path.isfile(output_csv_path):
+        df.to_csv(output_csv_path, mode='a', header=False, index=False)
+    else:
+        df.to_csv(output_csv_path, index=False)
+
     print(f"Validation results saved to {output_csv_path}")
 
 

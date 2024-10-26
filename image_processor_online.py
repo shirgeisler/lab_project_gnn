@@ -1,11 +1,10 @@
-import torch
 import numpy as np
 from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
 import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms, datasets
-from torch_geometric.data import Data, DataLoader as PyGDataLoader
+from torch_geometric.data import Data
 from baseline import filter_dataset
 import random
 import os
@@ -19,8 +18,7 @@ test_path = 'data/tiny-imagenet-200/val'
 
 
 class ImageGraphProcessor:
-    def __init__(self, image_size=(64, 64), num_parts=64, num_clusters=3, batch_size=32,
-               data_path='data/tiny-imagenet-200'):
+    def __init__(self, method, image_size=(64, 64), num_parts=64, num_clusters=3, data_path='data/tiny-imagenet-200'):
         """
         Initializes the ImageGraphProcessor with parameters for image size, number of parts, and clusters.
         """
@@ -28,10 +26,9 @@ class ImageGraphProcessor:
         self.num_parts = num_parts
         self.num_clusters = num_clusters
         self.num_nearest_neighbors = 5
-        self.train_path = data_path + '/train'
-        self.val_path = data_path + '/val'
-
+        self.method = method
         self.folder_name_to_label = {}
+
         with open(data_path + '/words.txt', 'r') as f:
             for line in f:
                 parts = line.split('\t')
@@ -86,7 +83,7 @@ class ImageGraphProcessor:
         return avg_color
 
 
-    def create_pyg_graph(self, parts, num_rows, num_cols, method='knn'):
+    def create_pyg_graph(self, parts, num_rows, num_cols):
         """Directly creates a PyTorch Geometric graph without relying on NetworkX."""
         avg_colors = [self.calculate_average_color(part) for part in parts]
 
@@ -98,7 +95,7 @@ class ImageGraphProcessor:
         edge_attr = []
         cluster_labels = None
 
-        if method == 'complete_graph_with_reweights':
+        if self.method == 'complete_graph':
             num_nodes = len(parts)
             for i in range(num_nodes):
                 for j in range(i + 1, num_nodes):
@@ -126,7 +123,7 @@ class ImageGraphProcessor:
                         edge_index.append([idx, bottom_neighbor])
                         edge_index.append([bottom_neighbor, idx])  # Add reverse direction
 
-        if method == 'kmeans':
+        if self.method == 'kmeans':
             # Clustering using KMeans
             kmeans = KMeans(n_clusters=self.num_clusters)
             cluster_labels = kmeans.fit_predict(avg_colors)
@@ -140,7 +137,7 @@ class ImageGraphProcessor:
             # Convert edge list to a tensor
             edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
 
-        if method == 'knn':
+        if self.method == 'knn':
             # create neighbor edges based on KNN
             from sklearn.neighbors import NearestNeighbors
             neigh = NearestNeighbors(n_neighbors=self.num_nearest_neighbors)
@@ -155,7 +152,7 @@ class ImageGraphProcessor:
         # Create a PyTorch Geometric graph
         pyg_graph = Data(x=x, edge_index=edge_index)
 
-        if method == 'complete_graph_with_reweights':
+        if self.method == 'complete_graph':
             pyg_graph.edge_attr = edge_attr  # Attach edge weights
 
         return pyg_graph, cluster_labels, edge_index
@@ -227,13 +224,11 @@ class ImageGraphProcessor:
                 parts, num_rows, num_cols, part_height, part_width = self.split_image_into_parts(image)
 
                 # Create the graph, ensure node features are 64x3
-                pyg_graph, cluster_labels, edge_index = self.create_pyg_graph(parts, num_rows, num_cols,
-                                                                              method='knn')
+                pyg_graph, cluster_labels, edge_index = self.create_pyg_graph(parts, num_rows, num_cols)
 
-                # Ensure node features are of shape (64, 3)
                 assert pyg_graph.x.size() == (64, 3), "Node features should be 64x3."
 
-                pyg_graph.y = labels[i]  # Add label to the graph
+                pyg_graph.y = labels[i]
 
                 # Add the graph and corresponding label to the batch
                 graphs_batch.append(pyg_graph)
@@ -241,10 +236,9 @@ class ImageGraphProcessor:
                 # Return a batch of graphs if it reaches the batch size
                 if len(graphs_batch) == batch_size:
                     batch = Batch.from_data_list(graphs_batch)  # Create batch of graphs
-                    # Ensure the batch is shaped appropriately (this should preserve the 64x3 for each graph)
                     assert batch.x.size(0) == batch_size * 64, "Batch node features should be (batch_size * 64) by 3."
                     yield batch  # Yield the batch for further processing
-                    graphs_batch = []  # Reset the batch
+                    graphs_batch = []
 
         # Yield any remaining graphs if there are fewer than batch_size
         if graphs_batch:
@@ -252,10 +246,9 @@ class ImageGraphProcessor:
 
 
 if __name__ == '__main__':
-    # Initialize the processor
     processor = ImageGraphProcessor(image_size=(64, 64), num_parts=64, num_clusters=3)
 
     # Process a batch of images and create graphs
     for pyg_graph, cluster_labels in processor.process_batch():
         # The graph is processed and the image with clusters is displayed
-        print(pyg_graph)  # PyTorch Geometric graph ready for GNN input
+        print(pyg_graph)

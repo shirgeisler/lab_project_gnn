@@ -15,9 +15,18 @@ torch.manual_seed(SEED)
 torch.cuda.manual_seed_all(SEED)
 
 
-# Step 4: Use ImageFolder with the selected classes
 def filter_dataset(dataset, selected_classes):
-    """Filters an ImageFolder dataset to include only the selected classes and remaps class indices."""
+    """
+    Filters an ImageFolder dataset to include only specified classes and remaps indices.
+
+    Args:
+        dataset (ImageFolder): The dataset to filter.
+        selected_classes (list of str): List of class names to keep.
+
+    Returns:
+        ImageFolder: The dataset containing only the selected classes with remapped indices.
+    """
+
     # Get index of selected classes based on original dataset's class_to_idx
     selected_class_idxs = [dataset.class_to_idx[cls] for cls in selected_classes]
 
@@ -40,6 +49,13 @@ def filter_dataset(dataset, selected_classes):
 
 
 def get_loaders():
+    """
+   Prepares DataLoaders for training and testing, applying data augmentation to the training set
+   and selecting a random subset of 10 classes.
+
+   Returns:
+       tuple: (train_loader, test_loader) DataLoaders with filtered classes and transformations applied.
+    """
     train_transform = transforms.Compose([
         transforms.Resize(256),
         transforms.RandomResizedCrop(224),
@@ -73,14 +89,23 @@ def get_loaders():
     return train_loader, test_loader
 
 
-# Baseline Models: ResNet-18, VGG-16, MobileNetV2
 def get_model(model_name):
+    """
+      Initializes a ResNet-18 or MobileNetV2 model with pretrained weights and adjusts the final layer
+      for a custom number of classes.
+
+      Args:
+          model_name (str): Either 'resnet18' or 'mobilenet_v2'.
+
+      Returns:
+          torch.nn.Module: The customized model ready for training on the specified device.
+
+      Raises:
+          ValueError: If `model_name` is not 'resnet18' or 'mobilenet_v2'.
+      """
     if model_name == 'resnet18':
         model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)  # Updated to use `weights`
         model.fc = nn.Linear(model.fc.in_features, num_classes)
-    elif model_name == 'vgg16':
-        model = models.vgg16(weights=models.VGG16_Weights.DEFAULT)  # Updated to use `weights`
-        model.classifier[6] = nn.Linear(4096, num_classes)
     elif model_name == 'mobilenet_v2':
         model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)  # Updated to use `weights`
         model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
@@ -89,8 +114,19 @@ def get_model(model_name):
     return model.to(device)
 
 
-# Train function
 def train(model, loader, criterion, optimizer):
+    """
+    Trains the model for one epoch on the provided DataLoader.
+
+    Args:
+        model (torch.nn.Module): The model to train.
+        loader (DataLoader): DataLoader providing training data.
+        criterion (torch.nn.Module): Loss function.
+        optimizer (torch.optim.Optimizer): Optimizer for model parameters.
+
+    Prints:
+        The average training loss and accuracy for the epoch.
+    """
     model.train()
     total_loss, correct = 0, 0
     for images, labels in tqdm(loader, desc='Training'):
@@ -105,8 +141,18 @@ def train(model, loader, criterion, optimizer):
     print(f"Train Loss: {total_loss / len(loader):.4f}, Accuracy: {correct / len(loader.dataset):.4f}")
 
 
-# Test function
 def evaluate(model, loader, criterion):
+    """
+    Evaluates the model on the provided DataLoader.
+
+    Args:
+        model (torch.nn.Module): The model to evaluate.
+        loader (DataLoader): DataLoader providing evaluation data.
+        criterion (torch.nn.Module): Loss function.
+
+    Prints:
+        The average loss and accuracy for the evaluation.
+    """
     model.eval()
     total_loss, correct = 0, 0
     with torch.no_grad():
@@ -125,9 +171,9 @@ if __name__ == "__main__":
     learning_rate = 0.001
     num_classes = 10
 
-    # Main training loop for each baseline
+    # Training loop for each baseline
     for model_name in [
-                       #'resnet18',
+                       'resnet18',
                        'mobilenet_v2']:
         print(f"\nTraining {model_name}...")
         model = get_model(model_name)
