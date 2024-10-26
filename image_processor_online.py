@@ -162,7 +162,8 @@ class ImageGraphProcessor:
                                          cluster_labels):
         """Draws the original image and a grid with clusters and edges side by side,
         and adds edges between neighboring parts in black."""
-
+        if self.method not in ['kmeans', 'knn']:
+            raise ValueError("This method only supports 'kmeans' and 'knn'.")
         fig, axes = plt.subplots(1, 2, figsize=(
         16, 8))  # Create two subplots, one for the original image and one for the grid
 
@@ -194,15 +195,21 @@ class ImageGraphProcessor:
             pos[idx] = (x_center, y_center)
 
         # Draw the edges from edge_index
+        if self.method == 'kmeans':
+            selected_cluster = 1
+        elif self.method == 'knn':
+            #select a random node
+            selected_node = random.randint(0, self.num_parts - 1)
+
         for start, end in edge_index.t().tolist():
             x_start, y_start = pos[start]
             x_end, y_end = pos[end]
-            if cluster_labels[start] == cluster_labels[end]:  # Clustering-based edges (color similarity)
-                colors = {0: 'red', 1: 'blue', 2: 'green', 3: 'yellow', 4: 'purple', 5: 'orange'}
-                color = colors[cluster_labels[start]]
-                ax2.plot([x_start, x_end], [y_start, y_end], color=color, lw=2)
-            else:  # Neighbor-based edges (adjacent parts)
-                ax2.plot([x_start, x_end], [y_start, y_end], color='black', lw=2)  # Black for edges between neighbors
+            if self.method == 'kmeans':
+                if cluster_labels[start] == selected_cluster and cluster_labels[end] == selected_cluster:
+                    ax2.plot([x_start, x_end], [y_start, y_end], color='red', lw=2)
+            elif self.method == 'knn':
+                if start == selected_node:
+                    ax2.plot([x_start, x_end], [y_start, y_end], color='red', lw=2)
 
         ax2.set_title("Image with Grid, Clusters, and Neighbor Edges")
         ax2.axis("off")  # Turn off axis for the image with grid
@@ -246,9 +253,13 @@ class ImageGraphProcessor:
 
 
 if __name__ == '__main__':
-    processor = ImageGraphProcessor(image_size=(64, 64), num_parts=64, num_clusters=3)
+    processor = ImageGraphProcessor(image_size=(64, 64), num_parts=64, num_clusters=3, method='knn')
 
-    # Process a batch of images and create graphs
-    for pyg_graph, cluster_labels in processor.process_batch():
-        # The graph is processed and the image with clusters is displayed
-        print(pyg_graph)
+    #use the drawing function on some images
+    for i, (images, labels) in enumerate(processor.train_loader):
+        for j in range(images.size(0)):
+            image = images[j]
+            parts, num_rows, num_cols, part_height, part_width = processor.split_image_into_parts(image)
+            pyg_graph, cluster_labels, edge_index = processor.create_pyg_graph(parts, num_rows, num_cols)
+            processor.draw_grid_on_image_with_clusters(image, num_rows, num_cols, part_height, part_width, edge_index,
+                                                       cluster_labels)
